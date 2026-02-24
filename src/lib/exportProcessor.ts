@@ -10,58 +10,61 @@ const EXPORT_DIR = path.join(process.cwd(), "exports")
 if (!fs.existsSync(EXPORT_DIR)) {
   fs.mkdirSync(EXPORT_DIR)
 }
-
 export async function processExport(jobId: string) {
-  const job = await prisma.exportJob.findUnique({
-    where: { id: jobId },
-  })
+  try {
+    const job = await prisma.exportJob.findUnique({
+      where: { id: jobId },
+    })
 
-  if (!job) throw new Error("Job not found")
+    if (!job) throw new Error("Job not found")
 
-  const filePath = path.join(EXPORT_DIR, `${jobId}.csv`)
+    const filePath = path.join(EXPORT_DIR, `${jobId}.csv`)
 
-  const writeStream = fs.createWriteStream(filePath)
-  const csvStream = format({ headers: true })
+    const writeStream = fs.createWriteStream(filePath)
+    const csvStream = format({ headers: true })
 
-  csvStream.pipe(writeStream)
+    csvStream.pipe(writeStream)
 
-  let lastProcessedId = job.lastProcessedId ?? null
-  const limit = 10000
+    let lastProcessedId = job.lastProcessedId ?? null
+    const limit = 10000
 
-  while (true) {
-    const chunk = await fetchChunk(lastProcessedId, limit, job.filters)
+    while (true) {
+      const chunk = await fetchChunk(lastProcessedId, limit, job.filters)
 
-    if (chunk.length === 0) break
-for (const row of chunk) {
-  const canContinue = csvStream.write(row)
-  if (!canContinue) {
-    await once(csvStream, "drain")
-  }
-}
+      if (chunk.length === 0) break
 
-    // Update checkpoint
-    lastProcessedId = chunk[chunk.length - 1].id
+      for (const row of chunk) {
+        const canContinue = csvStream.write(row)
+        if (!canContinue) {
+          await once(csvStream, "drain")
+        }
+      }
+
+      lastProcessedId = chunk[chunk.length - 1].id
+
+      await prisma.exportJob.update({
+        where: { id: jobId },
+        data: { lastProcessedId },
+      })
+    }
+
+    csvStream.end()
 
     await prisma.exportJob.update({
       where: { id: jobId },
-      data: { lastProcessedId },
+      data: {
+        status: "completed",
+        filePath,
+      },
     })
 
-    // Memory monitoring
-    const used = process.memoryUsage().heapUsed / 1024 / 1024
-    console.log(`Memory Usage: ${used.toFixed(2)} MB`)
-    await new Promise((res) => setTimeout(res, 500))
+    console.log("Export completed:", filePath)
+  } catch (error) {
+    console.error("Export failed:", error)
+
+    await prisma.exportJob.update({
+      where: { id: jobId },
+      data: { status: "failed" },
+    })
   }
-
-  csvStream.end()
-
-  await prisma.exportJob.update({
-    where: { id: jobId },
-    data: {
-      status: "completed",
-      filePath,
-    },
-  })
-
-  console.log("Export completed:", filePath)
 }
