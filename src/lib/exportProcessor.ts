@@ -50,7 +50,7 @@ for (const row of chunk) {
     // Memory monitoring
     const used = process.memoryUsage().heapUsed / 1024 / 1024
     console.log(`Memory Usage: ${used.toFixed(2)} MB`)
-    await new Promise((res) => setTimeout(res, 300))
+    await new Promise((res) => setTimeout(res, 500))
   }
 
   csvStream.end()
