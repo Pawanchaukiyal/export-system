@@ -1,0 +1,26 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model MainData {
+  id        Int      @id @default(autoincrement())
+  name      String
+  category  String
+  createdAt DateTime @default(now())
+
+  @@index([category])
+  @@index([createdAt])
+}
+
+model ExportJob {
+  id               String   @id @default(uuid())
+  status           String
+  filters          Json
+  lastProcessedId  Int?
+  filePath         String?
+  createdAt        DateTime @default(now())
+}
