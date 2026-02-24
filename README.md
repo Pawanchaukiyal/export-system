@@ -1,122 +1,155 @@
-Project Title
+Large Dataset Export System (Next.js)
+Overview
 
-Large Dataset CSV Export with Resume Support (Next.js + PostgreSQL)
+This project implements a scalable CSV export system for a potentially large dataset (~1 million rows) using Next.js and PostgreSQL.
 
-Problem Statement
+The system is designed to:
 
-Generate a CSV export of a potentially large dataset (~1 million rows) without:
+Avoid database overload
 
-Overloading the database
+Handle large datasets efficiently
 
-Crashing server memory
+Resume export if interrupted
 
-Blocking the request lifecycle
+Provide fast file download
 
-Losing progress if the server crashes
+Follow clean backend architecture principles
 
-Architecture Overview
-1. Keyset Pagination (No OFFSET)
+Problem Context
 
-Instead of OFFSET-based pagination, the system uses:
+A database table contains a large number of records (~1M rows).
+An API server provides paginated listing with filters.
+
+Requirement:
+Allow users to export the entire filtered dataset as a CSV without impacting transactional database operations.
+
+Architecture Decisions
+1. Optimized Query Strategy (No OFFSET)
+
+Instead of OFFSET pagination, the system uses keyset pagination:
 
 WHERE id > lastProcessedId
 ORDER BY id
 LIMIT 10000
 
-This ensures:
+Why:
 
-Stable performance on large datasets
+OFFSET degrades linearly as data grows
 
-No full-table scan degradation
+Keyset pagination keeps performance stable
 
-No skipped or duplicated rows
+Prevents skipped/duplicate rows
+
+Indexed fields:
+
+id (primary key)
+
+category
+
+createdAt
 
 2. Chunk-Based Processing
 
 Data fetched in batches of 10,000 rows
 
-Prevents database overload
+Prevents long-running DB locks
 
-Reduces transaction pressure
+Reduces memory pressure
 
 3. Streaming CSV Generation
 
-Uses Node.js streams with backpressure handling
+CSV generated using Node.js streams
 
-Writes incrementally to file
+Backpressure handled using drain event
 
-Prevents memory spikes
+No full dataset loaded into memory
 
-Backpressure handled via:
+This ensures stable memory usage even for large exports.
 
-if (!csvStream.write(row)) {
-  await once(csvStream, "drain")
-}
 4. Background Processing
 
-Export is executed asynchronously:
+Export flow:
 
-POST /api/export creates job
+POST /api/export → creates job
 
-Processing runs in background
+Export runs asynchronously
 
 API returns immediately with jobId
 
-5. Resume Capability
+Prevents blocking HTTP requests.
 
-lastProcessedId stored after each chunk
+5. Resume on Failure
 
-On server restart, unfinished jobs are detected
+Checkpoint mechanism:
 
-Export resumes from last checkpoint automatically
+lastProcessedId updated after each chunk
 
-This guarantees no data loss on crash.
+If server crashes:
+
+Unfinished jobs (status = running) detected on restart
+
+Export resumes automatically from last checkpoint
+
+This guarantees fault tolerance.
 
 6. Streaming File Download
 
-Download endpoint streams file via createReadStream
+Download endpoint streams file using:
 
-No full-file memory loading
+fs.createReadStream()
 
-Memory-safe even for large CSV files
+Benefits:
+
+No full file memory loading
+
+Fast and memory-safe download
 
 API Endpoints
+Create Export
 
 POST /api/export
-→ Creates export job
 
-GET /api/export/{id}/status
-→ Returns job status and progress
+Response:
 
-GET /api/export/{id}/download
-→ Streams generated CSV file
+{
+  "jobId": "uuid"
+}
+Check Status
 
-Performance Considerations
+GET /api/export/{jobId}/status
 
-Indexed filter columns
+Response:
 
-No OFFSET pagination
+{
+  "status": "running | completed | failed",
+  "lastProcessedId": number,
+  "filePath": string | null
+}
+Download CSV
 
-Controlled chunk size
+GET /api/export/{jobId}/download
 
-Backpressure-aware streaming
+Returns streamed CSV file (only if status = completed)
 
-Memory-safe file serving
+Failure Handling
 
-Resume on crash
+If export fails:
 
-How To Run
+Job status updated to failed
+
+No job remains permanently in running
+
+Resume logic handles incomplete jobs on restart
+
+How To Run (3 Steps)
 
 Install dependencies
 
 npm install
 
-Setup database and run migrations
+Setup database
 
 npx prisma migrate dev
-
-Seed large dataset
-
 npx prisma db seed
 
 Start server
@@ -124,8 +157,34 @@ Start server
 npm run dev
 Assumptions
 
-Primary key (id) is auto-increment and strictly increasing
+Primary key id is strictly increasing
 
-Snapshot consistency is not enforced (live export model)
+Snapshot consistency is not enforced
 
-Local file storage used for generated CSV
+Local file storage is used for CSV files
+
+Scalability Considerations
+
+For production-scale usage:
+
+Introduce job queue (e.g., Redis + BullMQ)
+
+Add concurrency limits
+
+Use object storage (S3)
+
+Implement job cleanup policy
+
+Conclusion
+
+This solution:
+
+Handles large datasets efficiently
+
+Protects database from overload
+
+Ensures memory-safe streaming
+
+Supports crash recovery
+
+Meets all assignment constraints

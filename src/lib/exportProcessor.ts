@@ -28,25 +28,28 @@ export async function processExport(jobId: string) {
     let lastProcessedId = job.lastProcessedId ?? null
     const limit = 10000
 
-    while (true) {
-      const chunk = await fetchChunk(lastProcessedId, limit, job.filters)
+while (true) {
+  const chunk = await fetchChunk(lastProcessedId, limit, job.filters)
 
-      if (chunk.length === 0) break
 
-      for (const row of chunk) {
-        const canContinue = csvStream.write(row)
-        if (!canContinue) {
-          await once(csvStream, "drain")
-        }
-      }
+  // throw new Error("Simulated failure for testing")
 
-      lastProcessedId = chunk[chunk.length - 1].id
+  if (chunk.length === 0) break
 
-      await prisma.exportJob.update({
-        where: { id: jobId },
-        data: { lastProcessedId },
-      })
+  for (const row of chunk) {
+    const canContinue = csvStream.write(row)
+    if (!canContinue) {
+      await once(csvStream, "drain")
     }
+  }
+
+  lastProcessedId = chunk[chunk.length - 1].id
+
+  await prisma.exportJob.update({
+    where: { id: jobId },
+    data: { lastProcessedId },
+  })
+}
 
     csvStream.end()
 
