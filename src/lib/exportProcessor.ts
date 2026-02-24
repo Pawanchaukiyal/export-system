@@ -3,9 +3,10 @@ import path from "path"
 import { format } from "@fast-csv/format"
 import { fetchChunk } from "./exportService"
 import { prisma } from "./db"
-
+import { once } from "events"
 const EXPORT_DIR = path.join(process.cwd(), "exports")
 
+// Ensure exports directory exists
 if (!fs.existsSync(EXPORT_DIR)) {
   fs.mkdirSync(EXPORT_DIR)
 }
@@ -18,6 +19,7 @@ export async function processExport(jobId: string) {
   if (!job) throw new Error("Job not found")
 
   const filePath = path.join(EXPORT_DIR, `${jobId}.csv`)
+
   const writeStream = fs.createWriteStream(filePath)
   const csvStream = format({ headers: true })
 
@@ -30,17 +32,24 @@ export async function processExport(jobId: string) {
     const chunk = await fetchChunk(lastProcessedId, limit, job.filters)
 
     if (chunk.length === 0) break
+for (const row of chunk) {
+  const canContinue = csvStream.write(row)
+  if (!canContinue) {
+    await once(csvStream, "drain")
+  }
+}
 
-    for (const row of chunk) {
-      csvStream.write(row)
-    }
-
+    // Update checkpoint
     lastProcessedId = chunk[chunk.length - 1].id
 
     await prisma.exportJob.update({
       where: { id: jobId },
       data: { lastProcessedId },
     })
+
+    // Memory monitoring
+    const used = process.memoryUsage().heapUsed / 1024 / 1024
+    console.log(`Memory Usage: ${used.toFixed(2)} MB`)
   }
 
   csvStream.end()
@@ -52,4 +61,6 @@ export async function processExport(jobId: string) {
       filePath,
     },
   })
+
+  console.log("Export completed:", filePath)
 }
