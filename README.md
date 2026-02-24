@@ -1,190 +1,235 @@
-Large Dataset Export System (Next.js)
-Overview
+# Large Dataset CSV Export System (Next.js)
 
-This project implements a scalable CSV export system for a potentially large dataset (~1 million rows) using Next.js and PostgreSQL.
+## Overview
+
+This project implements a scalable and fault-tolerant CSV export system for a potentially large dataset (~1 million rows) using **Next.js** and **PostgreSQL**.
 
 The system is designed to:
 
-Avoid database overload
+* Prevent database overload
+* Handle large datasets efficiently
+* Resume export automatically if interrupted
+* Provide fast and memory-safe file download
+* Maintain clean and maintainable backend architecture
 
-Handle large datasets efficiently
+---
 
-Resume export if interrupted
+## Problem Statement
 
-Provide fast file download
-
-Follow clean backend architecture principles
-
-Problem Context
-
-A database table contains a large number of records (~1M rows).
-An API server provides paginated listing with filters.
+A database table contains approximately 1 million records.
+An API server provides paginated listing with filtering capabilities.
 
 Requirement:
-Allow users to export the entire filtered dataset as a CSV without impacting transactional database operations.
 
-Architecture Decisions
-1. Optimized Query Strategy (No OFFSET)
+Enable exporting the entire filtered dataset as a CSV file without:
 
-Instead of OFFSET pagination, the system uses keyset pagination:
+* Overloading the database
+* Blocking API responsiveness
+* Crashing due to memory issues
+* Losing progress if the server fails
 
+---
+
+## Architecture Decisions
+
+### 1. Optimized Query Strategy (Keyset Pagination — No OFFSET)
+
+Instead of OFFSET-based pagination, the system uses keyset pagination:
+
+```sql
 WHERE id > lastProcessedId
 ORDER BY id
 LIMIT 10000
+```
 
-Why:
+**Why not OFFSET?**
 
-OFFSET degrades linearly as data grows
+* OFFSET performance degrades linearly as dataset size grows
+* It causes large table scans for deep pages
+* It may skip or duplicate rows in concurrent environments
 
-Keyset pagination keeps performance stable
+Keyset pagination ensures:
 
-Prevents skipped/duplicate rows
+* Stable performance at scale
+* Predictable query cost
+* No duplicate or skipped rows
 
-Indexed fields:
+**Indexed Columns:**
 
-id (primary key)
+* `id` (Primary Key)
+* `category`
+* `createdAt`
 
-category
+---
 
-createdAt
+### 2. Chunk-Based Processing
 
-2. Chunk-Based Processing
+* Data is fetched in batches of 10,000 rows
+* Each batch is processed independently
+* Reduces database pressure
+* Avoids long-running locks
+* Controls memory usage
 
-Data fetched in batches of 10,000 rows
+---
 
-Prevents long-running DB locks
+### 3. Streaming CSV Generation
 
-Reduces memory pressure
+* CSV is generated using Node.js streams
+* Backpressure is handled using the `drain` event
+* Data is written incrementally to disk
+* No full dataset is stored in memory
 
-3. Streaming CSV Generation
+This ensures stable memory usage even for very large exports.
 
-CSV generated using Node.js streams
+---
 
-Backpressure handled using drain event
+### 4. Background Processing
 
-No full dataset loaded into memory
+Export workflow:
 
-This ensures stable memory usage even for large exports.
+1. `POST /api/export` → creates export job
+2. Export runs asynchronously in background
+3. API returns immediately with `jobId`
 
-4. Background Processing
+This prevents long-running HTTP requests and keeps the API responsive.
 
-Export flow:
+---
 
-POST /api/export → creates job
-
-Export runs asynchronously
-
-API returns immediately with jobId
-
-Prevents blocking HTTP requests.
-
-5. Resume on Failure
+### 5. Resume on Failure
 
 Checkpoint mechanism:
 
-lastProcessedId updated after each chunk
+* `lastProcessedId` is updated after every chunk
+* Job status stored in database (`running`, `completed`, `failed`)
 
 If server crashes:
 
-Unfinished jobs (status = running) detected on restart
+* On restart, all jobs with `status = running` are detected
+* Export resumes automatically from `lastProcessedId`
 
-Export resumes automatically from last checkpoint
+This guarantees fault tolerance and prevents reprocessing from the beginning.
 
-This guarantees fault tolerance.
+---
 
-6. Streaming File Download
+### 6. Streaming File Download
 
-Download endpoint streams file using:
+Download endpoint uses:
 
+```ts
 fs.createReadStream()
+```
 
 Benefits:
 
-No full file memory loading
+* File is streamed to client
+* No full file loaded into memory
+* Memory-safe even for large CSV files
+* Faster response delivery
 
-Fast and memory-safe download
+---
 
-API Endpoints
-Create Export
+## API Endpoints
 
-POST /api/export
+### Create Export
+
+**POST** `/api/export`
 
 Response:
 
+```json
 {
   "jobId": "uuid"
 }
-Check Status
+```
 
-GET /api/export/{jobId}/status
+---
+
+### Check Export Status
+
+**GET** `/api/export/{jobId}/status`
 
 Response:
 
+```json
 {
   "status": "running | completed | failed",
   "lastProcessedId": number,
   "filePath": string | null
 }
-Download CSV
+```
 
-GET /api/export/{jobId}/download
+---
 
-Returns streamed CSV file (only if status = completed)
+### Download CSV
 
-Failure Handling
+**GET** `/api/export/{jobId}/download`
 
-If export fails:
+Returns streamed CSV file.
+Download is allowed only when `status = completed`.
 
-Job status updated to failed
+---
 
-No job remains permanently in running
+## Failure Handling
 
-Resume logic handles incomplete jobs on restart
+* Entire export process wrapped in try/catch
+* On any unexpected error:
 
-How To Run (3 Steps)
+  * Job status is updated to `failed`
+  * No job remains permanently in `running` state
+* Resume mechanism handles incomplete jobs safely
 
-Install dependencies
+---
 
+## How To Run (3 Steps)
+
+1. Install dependencies:
+
+```
 npm install
+```
 
-Setup database
+2. Setup database and seed large dataset:
 
+```
 npx prisma migrate dev
 npx prisma db seed
+```
 
-Start server
+3. Start server:
 
+```
 npm run dev
-Assumptions
+```
 
-Primary key id is strictly increasing
+---
 
-Snapshot consistency is not enforced
+## Assumptions
 
-Local file storage is used for CSV files
+* `id` is an auto-incrementing primary key
+* Snapshot consistency is not enforced (live export model)
+* CSV files are stored locally in `/exports` directory
 
-Scalability Considerations
+---
 
-For production-scale usage:
+## Scalability Considerations (Production Enhancements)
 
-Introduce job queue (e.g., Redis + BullMQ)
+For higher scale (millions of rows, concurrent exports):
 
-Add concurrency limits
+* Introduce distributed job queue (Redis + BullMQ)
+* Limit concurrent export processing
+* Store files in object storage (e.g., S3)
+* Implement job cleanup and retention policy
 
-Use object storage (S3)
+---
 
-Implement job cleanup policy
-
-Conclusion
+## Conclusion
 
 This solution:
 
-Handles large datasets efficiently
+* Handles large datasets efficiently
+* Protects database from heavy load
+* Uses memory-safe streaming techniques
+* Supports crash recovery through checkpointing
+* Meets all technical requirements specified in the assignment
 
-Protects database from overload
-
-Ensures memory-safe streaming
-
-Supports crash recovery
-
-Meets all assignment constraints
+---
