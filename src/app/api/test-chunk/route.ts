@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server"
-import { fetchChunk } from "@/lib/exportService"
+import { prisma } from "@/lib/db"
+import { processExport } from "@/lib/exportProcessor"
 
 export async function GET() {
-  const data = await fetchChunk(null, 10, {})
-  return NextResponse.json({
-    count: data.length,
-    firstId: data[0]?.id,
-    lastId: data[data.length - 1]?.id,
+  const job = await prisma.exportJob.create({
+    data: {
+      status: "running",
+      filters: {},
+    },
   })
+
+  await processExport(job.id)
+
+  return NextResponse.json({ jobId: job.id })
 }
